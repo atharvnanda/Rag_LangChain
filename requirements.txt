@@ -5,3 +5,4 @@ langchain-ollama
 langchain-text-splitters
 chromadb
 langchain-chroma
+streamlit

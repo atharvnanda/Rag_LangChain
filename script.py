@@ -16,6 +16,7 @@ for i, doc in enumerate(documents):
 
 #chunking
 
+
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size = 200,
     chunk_overlap = 50

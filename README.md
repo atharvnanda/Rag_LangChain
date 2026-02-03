@@ -359,4 +359,95 @@ This repo builds RAG **bottom-up**, the same way real systems are engineered.
 
 ---
 
-Happy hacking 🚀
+---
+
+# 🚀 Backend Service + Streamlit Frontend
+
+After completing the step-by-step RAG pipeline, the project was refactored into a cleaner **backend + frontend architecture** so the system behaves like a real application instead of standalone scripts.
+
+Instead of running separate scripts for each step, we now expose the RAG logic through a reusable backend service and interact with it through a Streamlit UI.
+
+## 🧠 Architecture
+
+```
+Streamlit UI (app.py)
+        ↓
+RAG Backend Service (pipeline.py)
+        ↓
+Chroma Vector DB + Ollama (Embeddings + LLM)
+```
+
+The **frontend handles only UI**, while all **RAG logic lives in the backend**.
+This separation mirrors how production AI systems are built.
+
+---
+
+## 📦 pipeline.py — Backend (RAG Service)
+
+This file contains the **core RAG engine** and is responsible for:
+
+* Initializing embeddings (`OllamaEmbeddings`)
+* Loading persistent Chroma DB
+* Creating retriever (`top-k similarity search`)
+* Initializing LLM (`ChatOllama`)
+* Defining a reusable `ask(question)` method
+
+All heavy components (models + DB) are loaded **once during initialization**, which makes queries fast and avoids reloading models on every request.
+
+### Usage
+
+```python
+from src.rag.pipeline import RAGPipeline
+
+pipeline = RAGPipeline()
+
+result = pipeline.ask("What is RAG?")
+print(result["answer"])
+print(result["sources"])
+```
+
+### Why this design?
+
+* avoids re-embedding data repeatedly
+* avoids reloading LLM per query
+* faster responses
+* reusable from any UI/API
+* production-style backend service pattern
+
+---
+
+## 🎨 app.py — Frontend (Streamlit UI)
+
+This file provides a simple **web interface** to interact with the RAG backend.
+
+Features:
+
+* Chat-style interface
+* User question input
+* Displays answers
+* Shows document sources
+* Uses `@st.cache_resource` to load backend only once
+* Runs fully local (no API keys required)
+
+### Run the app
+
+```bash
+streamlit run app.py
+```
+
+Then open the browser and start chatting with your documents.
+
+---
+
+## ✅ Result
+
+With these two files, the project now supports:
+
+* Modular backend service
+* Interactive frontend
+* Persistent vector database
+* Local embeddings + LLM
+* Real application structure (not just scripts)
+
+## This completes the transition from **learning each RAG component → building a deployable RAG application**.
+
