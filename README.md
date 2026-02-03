@@ -1,8 +1,5 @@
 # RAG with LangChain (Step-by-Step, From Scratch → Production)
 
-This project builds a **Retrieval Augmented Generation (RAG)** pipeline **incrementally**, understanding every layer instead of using black-box helpers.
-
-We intentionally avoid “magic one-liners” and implement each component manually:
 
 * Document loading
 * Chunking
@@ -12,7 +9,6 @@ We intentionally avoid “magic one-liners” and implement each component manua
 * Prompt grounding
 * LLM answer generation
 
-The goal is to understand **what happens under the hood**, not just “make it work”.
 
 ---
 
