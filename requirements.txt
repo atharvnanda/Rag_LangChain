@@ -1,5 +1,5 @@
 langchain
 langchain-community
 langchain-core
-langchain-openai
-langchain-textsplitters
+langchain-ollama
+langchain-text-splitters
