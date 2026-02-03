@@ -1,7 +1,8 @@
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_chroma import Chroma
+from langchain_core.prompts import PromptTemplate
 
 #loading data
 loader = DirectoryLoader('./data', glob='**/*.txt', loader_cls=TextLoader)
@@ -40,15 +41,55 @@ vectorstore = Chroma(
 )
 
 #adding documents to vectorstore (embedding + storing)
-
-vectorstore.add_documents(chunks)
+if vectorstore._collection.count() == 0:
+    vectorstore.add_documents(chunks)
 
 print("Documents stored in Chroma")
 
-#similarity search
+#retriever function
+
+retriever = vectorstore.as_retriever(
+    search_kwargs = { #
+        "k": 2
+    }
+)
+
+#LLM
+
+llm = ChatOllama(
+    model = "mistral",
+    temparature = 0 #
+)
+
+#prompt template
+
+prompt_template = PromptTemplate(
+    input_variables = ["context", "question"],
+    template = """You are a helpful assistant. Use the following context to answer the question. If you don't know the answer, say you don't know.
+    Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+"""
+)
+
+#RAG function
 
 query = "What is RAG?"
-results = vectorstore.similarity_search(query, k=2)
 
-for i, doc in enumerate(results):
-    print(f'Result {i+1} content:\n{doc.page_content}\n metadata: {doc.metadata}\n')
+retrieved_docs = retriever.invoke(query)
+
+context = "\n".join([doc.page_content for doc in retrieved_docs])
+
+prompt = prompt_template.format(
+    context=context, 
+    question=query
+)
+
+response = llm.invoke(prompt)
+
+print(f"Question: {query}\n")
+print(f"Answer: {response.content}\n")
