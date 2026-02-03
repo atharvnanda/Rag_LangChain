@@ -1,6 +1,7 @@
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
+from langchain_chroma import Chroma
 
 #loading data
 loader = DirectoryLoader('./data', glob='**/*.txt', loader_cls=TextLoader)
@@ -30,7 +31,24 @@ embedding_model = OllamaEmbeddings(
     model = "nomic-embed-text"
 )
 
-embeddings = embedding_model.embed_documents([chunk.page_content for chunk in chunks])
+#creating a vectorstore
 
-print(f'Generated {len(embeddings)} embeddings.')
-print(embeddings[0][:5]) 
+vectorstore = Chroma(
+    collection_name = "rag_demo",
+    embedding_function = embedding_model,
+    persist_directory = './chroma_db'
+)
+
+#adding documents to vectorstore (embedding + storing)
+
+vectorstore.add_documents(chunks)
+
+print("Documents stored in Chroma")
+
+#similarity search
+
+query = "What is RAG?"
+results = vectorstore.similarity_search(query, k=2)
+
+for i, doc in enumerate(results):
+    print(f'Result {i+1} content:\n{doc.page_content}\n metadata: {doc.metadata}\n')
