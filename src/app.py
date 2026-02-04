@@ -1,5 +1,5 @@
 import streamlit as st
-from src.pipeline import RAGPipeline
+from pipeline import RAGPipeline
 
 pipeline = RAGPipeline()
 
