@@ -1,16 +1,25 @@
-from langchain_community.document_loaders import DirectoryLoader, TextLoader, WebBaseLoader
+from langchain_community.document_loaders import PlaywrightURLLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from bs4 import BeautifulSoup
 
 # "https://en.wikipedia.org/wiki/Retrieval-augmented_generation"
+# "https://docs.langchain.com/",
+# "https://docs.python.org/3/"
+# "example.org"
+
+#"https://www.indiatoday.in/business/market/story/anthropic-new-ai-tools-panic-on-wall-street-it-stocks-hit-explained-2862772-2026-02-04"
 URLS = [
-    "https://en.wikipedia.org/wiki/Retrieval-augmented_generation"
+    "https://www.indiatoday.in/"
 ]
 
 def load_urls(URLS):
-    loader = WebBaseLoader(URLS)
+    loader = PlaywrightURLLoader(
+        urls=URLS,
+        headless=True,
+        remove_selectors=["script", "style", "nav", "footer"]
+    )
     return loader.load()
 
 def clean_documents(docs):
@@ -56,7 +65,7 @@ def embedStore(data):
     )
 
     vectorstore = Chroma(
-        collection_name = "rag_web",
+        collection_name = "rag_it",
         embedding_function = embedding_model,
         persist_directory = "./chroma_db"
     )

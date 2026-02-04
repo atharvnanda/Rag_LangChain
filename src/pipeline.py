@@ -10,7 +10,7 @@ class RAGPipeline:
 
         # vector db
         self.vectorstore = Chroma(
-            collection_name="rag_web", #prev vector db : rag_demo
+            collection_name="rag_it", #prev vector db : rag_demo , rag_web
             embedding_function=self.embedding_model,
             persist_directory="./chroma_db"
         )

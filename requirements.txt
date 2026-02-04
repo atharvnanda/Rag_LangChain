@@ -7,3 +7,5 @@ chromadb
 langchain-chroma
 streamlit
 beautifulsoup4
+playwright
+unstructured
