@@ -1,6 +1,10 @@
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_chroma import Chroma
 from langchain_core.prompts import PromptTemplate
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
+import os
+
 
 
 class RAGPipeline:
@@ -16,17 +20,25 @@ class RAGPipeline:
         )
 
         # retriever
-        self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 2})
+        self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
 
         # llm
-        self.llm = ChatOllama(model="llama3.2:latest", temperature=1)
+        # self.llm = ChatOllama(model="llama3.2:latest", temperature=1)
+        
+        load_dotenv()
+        key = os.getenv("GROQ_API_KEY")
+        self.llm = ChatGroq(
+            model="llama-3.3-70b-versatile", 
+            temperature=0.5,
+            api_key=key
+        )
 
         # prompt
         self.prompt = PromptTemplate(
             input_variables=["context", "question"],
             template="""
-Answer ONLY from the provided context.
-If not found, say "I don't know".
+Answer from the provided context to give news. 
+If the question cannot be answered from the context, just say "I don't know".
 
 Context:
 {context}
