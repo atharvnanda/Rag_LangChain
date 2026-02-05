@@ -23,7 +23,6 @@ class RAGPipeline:
         self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
 
         # llm
-        # self.llm = ChatOllama(model="llama3.2:latest", temperature=1)
         
         load_dotenv()
         key = os.getenv("GROQ_API_KEY")
@@ -38,9 +37,9 @@ class RAGPipeline:
             input_variables=["context", "question"],
             template="""
 
-Answer from the BOTH provided context AND chat history (to retain chat memory) to give news and provide facts . Can be slightly conversational with user.
+Answer from the both provided context and chat history (to retain chat memory) to give news and provide facts .
 USE HEADINGS, BULLETS, EMPHASIS to make the answer more readable and structured.
-If the question cannot be answered from the context, just say "I don't know".
+If the question cannot be answered from the context, stricly say "I apologise! I don't know".
 
 History:
 {history}
@@ -69,4 +68,9 @@ Answer:
 
         response = self.llm.invoke(prompt)
 
-        return response.content, docs
+        sources = list({
+            d.metadata.get("source", "Unknown")
+            for d in docs
+        })
+
+        return response.content, sources
