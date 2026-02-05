@@ -37,8 +37,13 @@ class RAGPipeline:
         self.prompt = PromptTemplate(
             input_variables=["context", "question"],
             template="""
-Answer from the provided context to give news. 
+
+Answer from the BOTH provided context AND chat history (to retain chat memory) to give news and provide facts . Can be slightly conversational with user.
+USE HEADINGS, BULLETS, EMPHASIS to make the answer more readable and structured.
 If the question cannot be answered from the context, just say "I don't know".
+
+History:
+{history}
 
 Context:
 {context}
@@ -50,12 +55,17 @@ Answer:
 """
         )
 
-    def ask(self, question: str):
+    def ask(self, question: str, chat_history: list):
         docs = self.retriever.invoke(question)
 
         context = "\n\n".join(d.page_content for d in docs)
 
-        prompt = self.prompt.format(context=context, question=question)
+        history_text = "\n".join(
+        f"{m['role']}: {m['content']}"
+        for m in chat_history[-6:]
+        )
+
+        prompt = self.prompt.format(history=history_text,context=context, question=question)
 
         response = self.llm.invoke(prompt)
 

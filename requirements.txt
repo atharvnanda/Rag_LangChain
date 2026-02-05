@@ -10,3 +10,7 @@ beautifulsoup4
 playwright
 unstructured
 langchain-groq
+os
+dotenv
+json
+uuid
