@@ -14,3 +14,5 @@ os
 dotenv
 json
 uuid
+crawl4ai 
+aiofiles
