@@ -10,7 +10,5 @@ beautifulsoup4
 playwright
 unstructured
 langchain-groq
-os
-dotenv
-json
-uuid
+python-dotenv
+rank-bm25

@@ -8,7 +8,7 @@ st.set_page_config(page_title="RAG Chat", layout="wide")
 
 pipeline = RAGPipeline()
 
-CHAT_DIR = "chats"
+CHAT_DIR = "chats_t20" #chats
 os.makedirs(CHAT_DIR, exist_ok=True)
 
 
@@ -118,11 +118,12 @@ if question := st.chat_input("Ask something..."):
     # Assistant reply
     with st.chat_message("assistant"):
         with st.spinner("Thinking... 🤔"):
-            answer, sources = pipeline.ask(
+            answer, sources, mode = pipeline.ask(
                 question,
                 st.session_state.messages
             )
 
+        st.caption(f"Retrieval mode: {mode}")
         st.markdown(answer)
 
         if sources:
@@ -135,7 +136,8 @@ if question := st.chat_input("Ask something..."):
         {
             "role": "assistant",
             "content": answer,
-            "sources": sources
+            "sources": sources,
+            "mode": mode,
         }
     )
 
