@@ -1,87 +1,170 @@
-from langchain_community.document_loaders import PlaywrightURLLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
-from langchain_chroma import Chroma
+import os
+import time
+import hashlib
+from pathlib import Path
+from collections import deque
+from urllib.parse import urljoin, urlparse, urlunparse
+from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-
-# "https://en.wikipedia.org/wiki/Retrieval-augmented_generation"
-# "https://docs.langchain.com/",
-# "https://docs.python.org/3/"
-# "example.org"
-
-#"https://www.indiatoday.in/business/market/story/anthropic-new-ai-tools-panic-on-wall-street-it-stocks-hit-explained-2862772-2026-02-04"
-URLS = [
-    "https://www.indiatoday.in/"
-]
-
-def load_urls(URLS):
-    loader = PlaywrightURLLoader(
-        urls=URLS,
-        headless=True,
-        remove_selectors=["script", "style", "nav", "footer"]
-    )
-    return loader.load()
-
-def clean_documents(docs):
-    cleaned_docs = []
-
-    for doc in docs:
-        soup = BeautifulSoup(doc.page_content, "html.parser")
-
-        # remove useless tags
-        for tag in soup(["script", "style", "nav", "footer", "header"]):
-            tag.decompose()
-
-        # extract only meaningful text blocks
-        
-
-        clean_text = soup.get_text()
-        clean_text = ' '.join(clean_text.strip().split())
-
-        if clean_text:
-            doc.page_content = clean_text
-            cleaned_docs.append(doc)
-    return cleaned_docs
+from playwright.sync_api import sync_playwright
+from pageindex import PageIndexClient
+import crawl_config as cfg
 
 
-def chunking(docs):
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size = 200,
-        chunk_overlap = 50
+# CONFIG
+
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+
+MARKDOWN_FILE = DATA_DIR / "site_dump.md"
+DOC_ID_FILE = DATA_DIR / "doc_id.txt"
+
+
+# Helpers
+
+def sha256(text: str):
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def canonicalize(url):
+    p = urlparse(url)
+    return urlunparse(("https", p.netloc.lower(), p.path.rstrip("/") or "/", "", "", ""))
+
+
+def allowed(url):
+    if any(d in url for d in cfg.DENY_URL_SUBSTRINGS):
+        return False
+
+    parsed = urlparse(url)
+
+    return (
+        parsed.netloc in cfg.ALLOWED_DOMAINS
+        and any(prefix in parsed.path for prefix in cfg.ALLOWED_PATH_PREFIXES)
     )
 
-    cks = text_splitter.split_documents(docs)
 
-    clean_chunks = [ 
-        c for c in cks 
-        if c.page_content.strip() 
-    ]
+# Crawl site
 
-    return clean_chunks
+def crawl_pages():
+    queue = deque((canonicalize(seed), 0) for seed in cfg.SEED_URLS)
+    visited = set()
+    pages = []
 
-def embedStore(data):
-    embedding_model = OllamaEmbeddings(
-        model = "nomic-embed-text"
-    )
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
 
-    vectorstore = Chroma(
-        collection_name = "rag_it",
-        embedding_function = embedding_model,
-        persist_directory = "./chroma_db"
-    )
+        while queue and len(visited) < cfg.MAX_PAGES:
+            url, depth = queue.popleft()
 
-    vectorstore.add_documents(data)
+            if url in visited or depth > cfg.MAX_DEPTH or not allowed(url):
+                continue
+
+            visited.add(url)
+
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=cfg.REQUEST_TIMEOUT_MS)
+                page.wait_for_timeout(cfg.WAIT_AFTER_LOAD_MS)
+                html = page.content()
+            except Exception:
+                continue
+
+            soup = BeautifulSoup(html, "html.parser")
+
+            for tag in soup(["script", "style", "nav", "footer", "header"]):
+                tag.decompose()
+
+            text = " ".join(soup.get_text().split())
+
+            if text:
+                pages.append((url, text))
+
+            if depth < cfg.MAX_DEPTH:
+                for a in soup.find_all("a", href=True):
+                    nxt = canonicalize(urljoin(url, a["href"]))
+                    if allowed(nxt):
+                        queue.append((nxt, depth + 1))
+
+        browser.close()
+
+    return pages
+
+
+# Markdown handling
+
+def load_existing_hashes():
+    if not MARKDOWN_FILE.exists():
+        return set()
+
+    hashes = set()
+
+    with open(MARKDOWN_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("<!--hash:"):
+                hashes.add(line.strip()[9:-4])
+
+    return hashes
+
+
+def append_new_pages(pages):
+    existing_hashes = load_existing_hashes()
+
+    new_sections = []
+
+    for url, text in pages:
+        h = sha256(text)
+
+        if h in existing_hashes:
+            continue
+
+        section = f"\n\n<!--hash:{h}-->\n# {url}\n\n{text}\n"
+        new_sections.append(section)
+
+    if new_sections:
+        with open(MARKDOWN_FILE, "a", encoding="utf-8") as f:
+            f.writelines(new_sections)
+
+    print(f"Appended {len(new_sections)} new/changed pages")
+
+
+# PageIndex upload
+
+def upload_tree():
+    client = PageIndexClient(api_key=os.getenv("PAGEINDEX_API_KEY"))
+
+    print("Submitting markdown to PageIndex...")
+
+    res = client.submit_document(str(MARKDOWN_FILE))
+    new_doc_id = res["doc_id"]
+
+    print("New doc_id:", new_doc_id)
+
+    # wait for processing
+    while True:
+        status = client.get_document(new_doc_id)["status"]
+        print("status:", status)
+
+        if status == "completed":
+            break
+
+        time.sleep(3)
+
+    # delete old tree
+    if DOC_ID_FILE.exists():
+        old_id = DOC_ID_FILE.read_text().strip()
+        if old_id:
+            print("Deleting old tree:", old_id)
+            client.delete_document(old_id)
+
+    DOC_ID_FILE.write_text(new_doc_id)
+
+
+# Main
 
 if __name__ == "__main__":
-    #loading data
-    url_docs = load_urls(URLS)
-    url_docs = clean_documents(url_docs)
-    print(f"Loaded {len(url_docs)} Documents")
+    load_dotenv()
+    pages = crawl_pages()
+    print(f"Crawled {len(pages)} pages")
 
-    #chunking
-    chunks = chunking(url_docs)
-    print(f"Loaded {len(chunks)} Chunks")
-
-    #adding documents to vectorstore (embedding + storing)
-    embedStore(chunks)
-    print("Documents stored in Chroma")
+    append_new_pages(pages)
+    upload_tree()
