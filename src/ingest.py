@@ -336,7 +336,6 @@ def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
             ids_to_add,
             failed_urls,
         )
-git checkout -b pageindex-experiments
 
     if failed_urls:
         failure_payload = {

@@ -11,4 +11,3 @@ playwright
 unstructured
 langchain-groq
 python-dotenv
-rank-bm25
