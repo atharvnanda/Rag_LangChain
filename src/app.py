@@ -8,7 +8,7 @@ st.set_page_config(page_title="RAG Chat", layout="wide")
 
 pipeline = RAGPipeline()
 
-CHAT_DIR = "chats_t20" #chats
+CHAT_DIR = "chats_t20_new" #chats, chats_t20
 os.makedirs(CHAT_DIR, exist_ok=True)
 
 

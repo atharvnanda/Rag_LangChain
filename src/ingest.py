@@ -19,6 +19,7 @@ import nltk
 from nltk.tokenize import sent_tokenize
 
 class HFInferenceEmbeddings(Embeddings):
+    '''Embeddings class that uses Hugging Face Inference API.'''
     def __init__(self, model_name: str):
         self.client = InferenceClient(
             provider="hf-inference",
@@ -65,6 +66,7 @@ def sanitize_for_embedding(text: str) -> str:
 
 
 def canonicalize_url(url: str) -> str:
+    '''Basic URL canonicalization for deduplication and stability.'''
     parsed = urlparse(url)
     scheme = "https"
     netloc = parsed.netloc.lower()
@@ -72,11 +74,11 @@ def canonicalize_url(url: str) -> str:
     if path != "/":
         path = path.rstrip("/")
 
-    # Drop query string + fragment for dedup/stability.
     return urlunparse((scheme, netloc, path, "", "", ""))
 
 
 def is_allowed_url(url: str) -> bool:
+    '''Checks if a URL is within the allowed scope based on domain, path, and deny substrings.'''
     lowered = url.lower()
     if any(deny in lowered for deny in cfg.DENY_URL_SUBSTRINGS):
         return False
@@ -88,6 +90,7 @@ def is_allowed_url(url: str) -> bool:
     return any(parsed.path.startswith(prefix) for prefix in cfg.ALLOWED_PATH_PREFIXES)
 
 def extract_page_fields(html: str) -> tuple[str, str, str | None]:
+    '''Extracts title, clean text, and published date from HTML content.'''
     soup = BeautifulSoup(html, "html.parser")
 
     for tag in soup(["script", "style", "nav", "footer", "header", "noscript", "form", "svg"]):
@@ -112,6 +115,7 @@ def extract_page_fields(html: str) -> tuple[str, str, str | None]:
 
 
 def extract_links(current_url: str, html: str) -> set[str]:
+    '''Extracts and canonicalizes all links from the given HTML content.'''
     soup = BeautifulSoup(html, "html.parser")
     links = set()
 
@@ -125,6 +129,7 @@ def extract_links(current_url: str, html: str) -> set[str]:
 
 
 def crawl_pages() -> list[dict]:
+    '''Crawls pages starting from seed URLs, respecting depth and page limits, and extracts relevant fields.'''
     run_time = utc_now_iso()
     queue = deque((canonicalize_url(seed), 0) for seed in cfg.SEED_URLS)
     queued = {canonicalize_url(seed) for seed in cfg.SEED_URLS}
@@ -163,6 +168,7 @@ def crawl_pages() -> list[dict]:
                         "title": title,
                         "published_at": published_at,
                         "clean_text": clean_text,
+                        "html": html,
                         "content_hash": content_hash,
                         "crawled_at": run_time,
                     }
@@ -181,7 +187,11 @@ def crawl_pages() -> list[dict]:
 
 
 def chunk_page(page_record: dict) -> list[Document]:
-    soup = BeautifulSoup(page_record["clean_text"], "html.parser")
+    '''Converts a crawled page record into a list of Document chunks suitable for embedding and storage.'''
+    soup = BeautifulSoup(page_record["html"], "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header", "noscript", "form", "svg"]):
+        tag.decompose()
+
 
     blocks = []
     current_block = []
@@ -237,6 +247,11 @@ def chunk_page(page_record: dict) -> list[Document]:
             )
         )
 
+    if documents:
+        print("\n--- SAMPLE CHUNK ---")
+        print(documents[0].page_content[:500])
+        print("--------------------\n")
+
     return documents
 
 
@@ -247,6 +262,7 @@ def add_documents_with_isolation(
     ids: list[str],
     failed_urls: set[str],
 ) -> tuple[int, int]:
+    '''Adds documents to the vectorstore with error handling and isolation.'''
 
     if not docs:
         return 0, 0
@@ -277,15 +293,12 @@ def add_documents_with_isolation(
         return left_ok + right_ok, left_fail + right_fail
 
 def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
+    '''Ingests crawled pages into the vectorstore.'''
     if not pages:
         print("No pages crawled. Nothing to ingest.")
         return
     
-    load_dotenv()
-    client = InferenceClient(
-    provider="hf-inference",
-    api_key=os.environ["HF_TOKEN"],
-    )
+    
 
     embedding_model = HFInferenceEmbeddings(
         model_name="Qwen/Qwen3-Embedding-0.6B"
@@ -324,6 +337,8 @@ def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
 
         page_version_id = sha256_text(f"{url}:{content_hash}")
         chunks = chunk_page(page)
+        print(f"{page['url']} → {len(chunks)} chunks")
+
 
         for idx, chunk in enumerate(chunks):
             chunk.metadata.update(
@@ -370,8 +385,13 @@ def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
 
 
 if __name__ == "__main__":
-    # pages = crawl_pages()
-    # print(f"Crawled {len(pages)} pages inside IndiaToday T20 scope")
-    # upsert_pages_to_vectorstore(pages)
 
-    nltk.download("punkt")
+    load_dotenv()
+    client = InferenceClient(
+        provider="hf-inference",
+        api_key=os.environ["HF_TOKEN"],
+    )
+
+    pages = crawl_pages()
+    print(f"Crawled {len(pages)} pages inside IndiaToday T20 scope")
+    upsert_pages_to_vectorstore(pages)

@@ -44,5 +44,4 @@ WAIT_AFTER_LOAD_MS = 1000
 # Chunking + storage
 COLLECTION_NAME = "rag_t20_new"     # changed from rag_t20 to rag_t20_new to avoid conflicts with old one. 
 PERSIST_DIRECTORY = "./chroma_db"
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 75
+
