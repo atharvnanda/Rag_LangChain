@@ -5,15 +5,37 @@ import json
 import unicodedata
 import uuid
 from urllib.parse import urljoin, urlparse, urlunparse
-
+import os
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
-
+from langchain.embeddings.base import Embeddings
+from huggingface_hub import InferenceClient
+from dotenv import load_dotenv
 import crawl_config as cfg
+
+class HFInferenceEmbeddings(Embeddings):
+    def __init__(self, model_name: str):
+        self.client = InferenceClient(
+            provider="hf-inference",
+            api_key=os.environ["HF_TOKEN"],
+        )
+        self.model = model_name
+
+    def embed_documents(self, texts):
+        batch_size = 32
+        results = []
+        for i in range(0, len(texts), batch_size):
+            results.extend(
+                self.client.feature_extraction(texts[i:i+batch_size], model=self.model)
+            )
+        return results
+
+
+    def embed_query(self, text):
+        return self.client.feature_extraction(text, model=self.model)
 
 
 def utc_now_iso() -> str:
@@ -62,14 +84,6 @@ def is_allowed_url(url: str) -> bool:
         return False
 
     return any(parsed.path.startswith(prefix) for prefix in cfg.ALLOWED_PATH_PREFIXES)
-
-
-def classify_page_type(url: str) -> str:
-    lowered = url.lower()
-    if any(hint in lowered for hint in cfg.MUTABLE_PAGE_HINTS):
-        return "mutable_live"
-    return "news"
-
 
 def extract_page_fields(html: str) -> tuple[str, str, str | None]:
     soup = BeautifulSoup(html, "html.parser")
@@ -148,7 +162,6 @@ def crawl_pages() -> list[dict]:
                         "published_at": published_at,
                         "clean_text": clean_text,
                         "content_hash": content_hash,
-                        "page_type": classify_page_type(url),
                         "crawled_at": run_time,
                     }
                 )
@@ -165,7 +178,7 @@ def crawl_pages() -> list[dict]:
     return crawled_pages
 
 
-def chunk_page(page_record: dict) -> list[Document]:
+def chunk_page(page_record: dict) -> list[Document]:                                # ADOPT BETTER CHUNKING STRATEGIES
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=cfg.CHUNK_SIZE,
         chunk_overlap=cfg.CHUNK_OVERLAP,
@@ -177,7 +190,6 @@ def chunk_page(page_record: dict) -> list[Document]:
             "source": page_record["url"],
             "url_canonical": page_record["url"],
             "title": page_record["title"] or "",
-            "page_type": page_record["page_type"],
             "crawl_depth": page_record["depth"],
             "published_at": page_record["published_at"] or "",
             "content_hash": page_record["content_hash"],
@@ -199,10 +211,7 @@ def add_documents_with_isolation(
     ids: list[str],
     failed_urls: set[str],
 ) -> tuple[int, int]:
-    """
-    Add documents with recursive fault isolation.
-    Returns: (inserted_count, failed_count)
-    """
+
     if not docs:
         return 0, 0
 
@@ -231,27 +240,21 @@ def add_documents_with_isolation(
         )
         return left_ok + right_ok, left_fail + right_fail
 
-
-def mark_existing_as_not_current(collection, ids: list[str], metadatas: list[dict], last_seen_at: str) -> None:
-    if not ids:
-        return
-
-    updated_metadatas = []
-    for metadata in metadatas:
-        updated = dict(metadata)
-        updated["is_current"] = False
-        updated["last_seen_at"] = last_seen_at
-        updated_metadatas.append(updated)
-
-    collection.update(ids=ids, metadatas=updated_metadatas)
-
-
 def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
     if not pages:
         print("No pages crawled. Nothing to ingest.")
         return
+    
+    load_dotenv()
+    client = InferenceClient(
+    provider="hf-inference",
+    api_key=os.environ["HF_TOKEN"],
+    )
 
-    embedding_model = OllamaEmbeddings(model="nomic-embed-text")
+    embedding_model = HFInferenceEmbeddings(
+        model_name="Qwen/Qwen3-Embedding-0.6B"
+    )
+
     vectorstore = Chroma(
         collection_name=cfg.COLLECTION_NAME,
         embedding_function=embedding_model,
@@ -272,38 +275,16 @@ def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
     for page in pages:
         url = page["url"]
         content_hash = page["content_hash"]
-        page_type = page["page_type"]
 
         existing = collection.get(where={"url_canonical": url}, include=["metadatas"])
-        existing_ids = existing.get("ids", [])
         existing_metadatas = existing.get("metadatas", [])
 
-        current_entries = [
-            (doc_id, metadata)
-            for doc_id, metadata in zip(existing_ids, existing_metadatas)
-            if metadata.get("is_current", True)
-        ]
-
-        current_hash = current_entries[0][1].get("content_hash") if current_entries else None
-
-        # Skip unchanged content to avoid duplicate embeddings.
-        if current_hash == content_hash:
-            skipped += 1
-            continue
-
-        if page_type == "mutable_live":
-            # Mutable pages should keep only the latest snapshot active.
-            if existing_ids:
-                collection.delete(ids=existing_ids)
-        else:
-            # News pages retain history; old versions are marked non-current.
-            if current_entries:
-                mark_existing_as_not_current(
-                    collection,
-                    ids=[doc_id for doc_id, _ in current_entries],
-                    metadatas=[metadata for _, metadata in current_entries],
-                    last_seen_at=now,
-                )
+        # ---- SIMPLE DEDUPE ----
+        if existing_metadatas:
+            existing_hash = existing_metadatas[0].get("content_hash")
+            if existing_hash == content_hash:
+                skipped += 1
+                continue
 
         page_version_id = sha256_text(f"{url}:{content_hash}")
         chunks = chunk_page(page)
@@ -315,9 +296,6 @@ def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
                     "page_version_id": page_version_id,
                     "chunk_index": idx,
                     "total_chunks": len(chunks),
-                    "is_current": True,
-                    "first_seen_at": now,
-                    "last_seen_at": now,
                 }
             )
 
@@ -326,6 +304,7 @@ def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
             ids_to_add.append(chunk_id)
 
         inserted_pages += 1
+
 
     inserted_chunks = 0
     failed_chunks = 0

@@ -11,3 +11,4 @@ playwright
 unstructured
 langchain-groq
 python-dotenv
+huggingface-hub
