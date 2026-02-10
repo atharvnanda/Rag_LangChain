@@ -15,6 +15,8 @@ from langchain.embeddings.base import Embeddings
 from huggingface_hub import InferenceClient
 from dotenv import load_dotenv
 import crawl_config as cfg
+import nltk
+from nltk.tokenize import sent_tokenize
 
 class HFInferenceEmbeddings(Embeddings):
     def __init__(self, model_name: str):
@@ -178,31 +180,65 @@ def crawl_pages() -> list[dict]:
     return crawled_pages
 
 
-def chunk_page(page_record: dict) -> list[Document]:                                # ADOPT BETTER CHUNKING STRATEGIES
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=cfg.CHUNK_SIZE,
-        chunk_overlap=cfg.CHUNK_OVERLAP,
-    )
+def chunk_page(page_record: dict) -> list[Document]:
+    soup = BeautifulSoup(page_record["clean_text"], "html.parser")
 
-    base_doc = Document(
-        page_content=page_record["clean_text"],
-        metadata={
-            "source": page_record["url"],
-            "url_canonical": page_record["url"],
-            "title": page_record["title"] or "",
-            "crawl_depth": page_record["depth"],
-            "published_at": page_record["published_at"] or "",
-            "content_hash": page_record["content_hash"],
-            "crawled_at": page_record["crawled_at"],
-        },
-    )
+    blocks = []
+    current_block = []
 
-    chunks = splitter.split_documents([base_doc])
+    for tag in soup.find_all(["h1", "h2", "h3", "p"]):
+        text = tag.get_text(" ", strip=True)
+        if not text:
+            continue
 
-    for chunk in chunks:
-        chunk.page_content = sanitize_for_embedding(chunk.page_content)
+        if tag.name in ["h1", "h2", "h3"]:
+            if current_block:
+                blocks.append(" ".join(current_block))
+                current_block = []
+            current_block.append(text)
+        else:
+            current_block.append(text)
 
-    return [c for c in chunks if c.page_content.strip()]
+    if current_block:
+        blocks.append(" ".join(current_block))
+
+    chunks = []
+    for block in blocks:
+        block = sanitize_for_embedding(block)
+
+        if len(block) < 200:
+            if chunks:
+                chunks[-1] += " " + block
+            else:
+                chunks.append(block)
+        elif len(block) > 1200:
+            sentences = sent_tokenize(block)
+            temp = ""
+            for s in sentences:
+                if len(temp) + len(s) > 800:
+                    chunks.append(temp.strip())
+                    temp = s
+                else:
+                    temp += " " + s
+            if temp:
+                chunks.append(temp.strip())
+        else:
+            chunks.append(block)
+
+    documents = []
+    for idx, chunk in enumerate(chunks):
+        if not chunk.strip():
+            continue
+
+        documents.append(
+            Document(
+                page_content=chunk,
+                metadata={...}
+            )
+        )
+
+    return documents
+
 
 
 def add_documents_with_isolation(
@@ -334,6 +370,8 @@ def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
 
 
 if __name__ == "__main__":
-    pages = crawl_pages()
-    print(f"Crawled {len(pages)} pages inside IndiaToday T20 scope")
-    upsert_pages_to_vectorstore(pages)
+    # pages = crawl_pages()
+    # print(f"Crawled {len(pages)} pages inside IndiaToday T20 scope")
+    # upsert_pages_to_vectorstore(pages)
+
+    nltk.download("punkt")
