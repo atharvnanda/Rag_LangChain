@@ -118,12 +118,11 @@ if question := st.chat_input("Ask something..."):
     # Assistant reply
     with st.chat_message("assistant"):
         with st.spinner("Thinking... 🤔"):
-            answer, sources, mode = pipeline.ask(
+            answer, sources = pipeline.ask(
                 question,
                 st.session_state.messages
             )
 
-        st.caption(f"Retrieval mode: {mode}")
         st.markdown(answer)
 
         if sources:
@@ -137,7 +136,6 @@ if question := st.chat_input("Ask something..."):
             "role": "assistant",
             "content": answer,
             "sources": sources,
-            "mode": mode,
         }
     )
 

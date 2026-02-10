@@ -2,7 +2,8 @@ import os
 import re
 
 from dotenv import load_dotenv
-from langchain_ollama import OllamaEmbeddings
+from langchain.embeddings.base import Embeddings
+from huggingface_hub import InferenceClient
 from langchain_chroma import Chroma
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
@@ -10,21 +11,42 @@ from langchain_groq import ChatGroq
 import crawl_config as cfg
 
 
+class HFInferenceEmbeddings(Embeddings):
+    def __init__(self, model_name: str):
+        self.client = InferenceClient(
+            provider="hf-inference",
+            api_key=os.environ["HF_TOKEN"],
+        )
+        self.model = model_name
+
+    def embed_documents(self, texts):
+        batch_size = 32
+        results = []
+        for i in range(0, len(texts), batch_size):
+            results.extend(
+                self.client.feature_extraction(texts[i:i+batch_size], model=self.model)
+            )
+        return results
+
+    def embed_query(self, text):
+        return self.client.feature_extraction(text, model=self.model)
 
 class RAGPipeline:
     def __init__(self):
+        load_dotenv()
         # embeddings
-        self.embedding_model = OllamaEmbeddings(model="nomic-embed-text")
+        self.embedding_model = HFInferenceEmbeddings(
+            model_name="Qwen/Qwen3-Embedding-0.6B"
+        )
 
         # vector db
         self.vectorstore = Chroma(
-            collection_name=cfg.COLLECTION_NAME,  # prev vector db : rag_demo , rag_web, rag_it
+            collection_name=cfg.COLLECTION_NAME,  # prev vector db : rag_demo , rag_web, rag_it, rag_t20
             embedding_function=self.embedding_model,
             persist_directory=cfg.PERSIST_DIRECTORY,
         )
 
         # llm
-        load_dotenv()
         key = os.getenv("GROQ_API_KEY")
         self.llm = ChatGroq(
             model="llama-3.3-70b-versatile",
@@ -57,67 +79,12 @@ Answer:
 """
         )
 
-    @staticmethod
-    def _detect_query_mode(question: str) -> str:
-        q = question.lower()
 
-        latest_patterns = [
-            r"\blatest\b",
-            r"\bcurrent\b",
-            r"\btoday\b",
-            r"\bnow\b",
-            r"\brecent\b",
-            r"\bpoints table\b",
-            r"\bschedule\b",
-            r"\bstandings\b",
-            r"\bscoreboard\b",
-        ]
-        historical_patterns = [
-            r"\bold\b",
-            r"\bhistorical\b",
-            r"\bprevious\b",
-            r"\bearlier\b",
-            r"\bpast\b",
-            r"\barchive\b",
-            r"\blast year\b",
-        ]
-
-        if any(re.search(pattern, q) for pattern in latest_patterns):
-            return "latest"
-        if any(re.search(pattern, q) for pattern in historical_patterns):
-            return "historical"
-        return "balanced"
-
-    def _retrieve_documents(self, question: str, mode: str, k: int = 5):
-        docs = []
-
-        if mode == "latest":
-            docs = self.vectorstore.similarity_search(
-                question,
-                k=k,
-                filter={"is_current": True},
-            )
-        elif mode == "historical":
-            docs = self.vectorstore.similarity_search(question, k=k)
-        else:
-            # Balanced mode prefers current docs first, but falls back to full history.
-            docs = self.vectorstore.similarity_search(
-                question,
-                k=k,
-                filter={"is_current": True},
-            )
-            if not docs:
-                docs = self.vectorstore.similarity_search(question, k=k)
-
-        # Extra fallback for older collections that might not contain metadata filters.
-        if not docs:
-            docs = self.vectorstore.similarity_search(question, k=k)
-
-        return docs
+    def _retrieve_documents(self, question: str, k: int = 5):
+        return self.vectorstore.similarity_search(question, k=k)
 
     def ask(self, question: str, chat_history: list):
-        mode = self._detect_query_mode(question)
-        docs = self._retrieve_documents(question, mode)
+        docs = self._retrieve_documents(question)
 
         context = "\n\n".join(d.page_content for d in docs)
 
@@ -129,7 +96,6 @@ Answer:
             history=history_text,
             context=context,
             question=question,
-            mode=mode,
         )
 
         response = self.llm.invoke(prompt)
@@ -139,4 +105,4 @@ Answer:
             for d in docs
         })
 
-        return response.content, sources, mode
+        return response.content, sources
