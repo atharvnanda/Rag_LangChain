@@ -14,3 +14,4 @@ python-dotenv
 huggingface-hub
 nltk
 sentence-transformers
+langchain-classic

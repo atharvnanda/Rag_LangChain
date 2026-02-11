@@ -7,6 +7,9 @@ from sentence_transformers import SentenceTransformer
 from langchain_chroma import Chroma
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers import EnsembleRetriever
+from langchain_core.documents import Document
 
 import crawl_config as cfg
 
@@ -33,13 +36,35 @@ class RAGPipeline:
     def __init__(self):
         load_dotenv()
         # embeddings
-        self.embedding_model = LocalQwenEmbeddings
+        self.embedding_model = LocalQwenEmbeddings()
 
         # vector db
         self.vectorstore = Chroma(
             collection_name=cfg.COLLECTION_NAME,  # prev vector db : rag_demo , rag_web, rag_it, rag_t20
             embedding_function=self.embedding_model,
             persist_directory=cfg.PERSIST_DIRECTORY,
+        )
+
+        # dense retriever
+        dense_retriever = self.vectorstore.as_retriever(search_kwargs={"k": 6})
+
+        # load all docs once for BM25
+        all_docs = self.vectorstore.get()["documents"]
+        metas = self.vectorstore.get()["metadatas"]
+
+        from langchain_core.documents import Document
+        docs_for_bm25 = [
+            Document(page_content=t, metadata=m)
+            for t, m in zip(all_docs, metas)
+        ]
+
+        bm25_retriever = BM25Retriever.from_documents(docs_for_bm25)
+        bm25_retriever.k = 6
+
+        # hybrid retriever (RRF fusion)
+        self.retriever = EnsembleRetriever(
+            retrievers=[dense_retriever, bm25_retriever],
+            weights=[0.7, 0.3],
         )
 
         # llm
@@ -52,15 +77,12 @@ class RAGPipeline:
 
         # prompt
         self.prompt = PromptTemplate(
-            input_variables=["history", "context", "question", "mode"],
+            input_variables=["history", "context", "question"],
             template="""
 You are an intelligent, conversational AI assistant focused ONLY on ICC T20 World Cup information sourced from IndiaToday pages provided by retrieval.
 Use ONLY the context. Do not use outside knowledge.
 If answer is not present in context, strictly say: "I apologise! I don't know".
 Use headings and bullets when helpful.
-
-Retrieval mode:
-{mode}
 
 History:
 {history}
@@ -77,7 +99,8 @@ Answer:
 
 
     def _retrieve_documents(self, question: str, k: int = 5):
-        return self.vectorstore.similarity_search(question, k=k)
+        return self.retriever.invoke(question)
+
 
     def ask(self, question: str, chat_history: list):
         docs = self._retrieve_documents(question)
