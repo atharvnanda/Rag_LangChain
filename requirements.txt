@@ -13,3 +13,4 @@ langchain-groq
 python-dotenv
 huggingface-hub
 nltk
+sentence-transformers

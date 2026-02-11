@@ -17,28 +17,26 @@ from dotenv import load_dotenv
 import crawl_config as cfg
 import nltk
 from nltk.tokenize import sent_tokenize
+from sentence_transformers import SentenceTransformer
 
-class HFInferenceEmbeddings(Embeddings):
-    '''Embeddings class that uses Hugging Face Inference API.'''
-    def __init__(self, model_name: str):
-        self.client = InferenceClient(
-            provider="hf-inference",
-            api_key=os.environ["HF_TOKEN"],
-        )
-        self.model = model_name
+class LocalQwenEmbeddings(Embeddings):
+    def __init__(self):
+        self.model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B",
+                                         device="cuda")
 
     def embed_documents(self, texts):
-        batch_size = 32
-        results = []
-        for i in range(0, len(texts), batch_size):
-            results.extend(
-                self.client.feature_extraction(texts[i:i+batch_size], model=self.model)
-            )
-        return results
-
+        return self.model.encode(
+            texts,
+            batch_size=64,
+            normalize_embeddings=True,
+            show_progress_bar=True
+        ).tolist()
 
     def embed_query(self, text):
-        return self.client.feature_extraction(text, model=self.model)
+        return self.model.encode(
+            text,
+            normalize_embeddings=True,
+        ).tolist()
 
 
 def utc_now_iso() -> str:
@@ -243,17 +241,19 @@ def chunk_page(page_record: dict) -> list[Document]:
         documents.append(
             Document(
                 page_content=chunk,
-                metadata={...}
+                metadata={
+                    "source": page_record["url"],
+                    "url_canonical": page_record["url"],
+                    "title": page_record["title"] or "",
+                    "crawl_depth": page_record["depth"],
+                    "published_at": page_record["published_at"] or "",
+                    "content_hash": page_record["content_hash"],
+                    "crawled_at": page_record["crawled_at"],
+                }
             )
         )
 
-    if documents:
-        print("\n--- SAMPLE CHUNK ---")
-        print(documents[0].page_content[:500])
-        print("--------------------\n")
-
     return documents
-
 
 
 def add_documents_with_isolation(
@@ -269,12 +269,12 @@ def add_documents_with_isolation(
 
     try:
         vectorstore.add_documents(documents=docs, ids=ids)
+        print(f"Added {len(docs)} chunks for URL: {docs[0].metadata.get('source', 'Unknown')}")
         return len(docs), 0
     except Exception as exc:
         if len(docs) == 1:
             source = docs[0].metadata.get("source", "Unknown")
             failed_urls.add(source)
-            print(f"[WARN] Skipping 1 chunk from {source} due to embedding error: {exc}")
             return 0, 1
 
         mid = len(docs) // 2
@@ -300,9 +300,7 @@ def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
     
     
 
-    embedding_model = HFInferenceEmbeddings(
-        model_name="Qwen/Qwen3-Embedding-0.6B"
-    )
+    embedding_model = LocalQwenEmbeddings()
 
     vectorstore = Chroma(
         collection_name=cfg.COLLECTION_NAME,
@@ -386,11 +384,11 @@ def upsert_pages_to_vectorstore(pages: list[dict]) -> None:
 
 if __name__ == "__main__":
 
-    load_dotenv()
-    client = InferenceClient(
-        provider="hf-inference",
-        api_key=os.environ["HF_TOKEN"],
-    )
+    # load_dotenv()
+    # client = InferenceClient(
+    #     provider="hf-inference",
+    #     api_key=os.environ["HF_TOKEN"],
+    # )
 
     pages = crawl_pages()
     print(f"Crawled {len(pages)} pages inside IndiaToday T20 scope")

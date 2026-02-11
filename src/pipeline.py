@@ -3,41 +3,37 @@ import re
 
 from dotenv import load_dotenv
 from langchain.embeddings.base import Embeddings
-from huggingface_hub import InferenceClient
+from sentence_transformers import SentenceTransformer
 from langchain_chroma import Chroma
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 
 import crawl_config as cfg
 
-
-class HFInferenceEmbeddings(Embeddings):
-    def __init__(self, model_name: str):
-        self.client = InferenceClient(
-            provider="hf-inference",
-            api_key=os.environ["HF_TOKEN"],
-        )
-        self.model = model_name
+class LocalQwenEmbeddings(Embeddings):
+    def __init__(self):
+        self.model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B",
+                                         device="cuda")
 
     def embed_documents(self, texts):
-        batch_size = 32
-        results = []
-        for i in range(0, len(texts), batch_size):
-            results.extend(
-                self.client.feature_extraction(texts[i:i+batch_size], model=self.model)
-            )
-        return results
+        return self.model.encode(
+            texts,
+            batch_size=64,
+            normalize_embeddings=True,
+            show_progress_bar=True
+        ).tolist()
 
     def embed_query(self, text):
-        return self.client.feature_extraction(text, model=self.model)
+        return self.model.encode(
+            text,
+            normalize_embeddings=True,
+        ).tolist()
 
 class RAGPipeline:
     def __init__(self):
         load_dotenv()
         # embeddings
-        self.embedding_model = HFInferenceEmbeddings(
-            model_name="Qwen/Qwen3-Embedding-0.6B"
-        )
+        self.embedding_model = LocalQwenEmbeddings
 
         # vector db
         self.vectorstore = Chroma(
