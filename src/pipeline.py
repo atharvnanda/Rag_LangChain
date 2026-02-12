@@ -49,8 +49,9 @@ class RAGPipeline:
         dense_retriever = self.vectorstore.as_retriever(search_kwargs={"k": 6})
 
         # load all docs once for BM25
-        all_docs = self.vectorstore.get()["documents"]
-        metas = self.vectorstore.get()["metadatas"]
+        all_data = self.vectorstore.get()
+        all_docs = all_data["documents"]
+        metas = all_data["metadatas"]
 
         from langchain_core.documents import Document
         docs_for_bm25 = [

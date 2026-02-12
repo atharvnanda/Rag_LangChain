@@ -6,7 +6,12 @@ from pipeline import RAGPipeline
 
 st.set_page_config(page_title="RAG Chat", layout="wide")
 
-pipeline = RAGPipeline()
+@st.cache_resource
+def get_pipeline():
+    return RAGPipeline()
+
+
+pipeline = get_pipeline()
 
 CHAT_DIR = "chats_t20_new" #chats, chats_t20
 os.makedirs(CHAT_DIR, exist_ok=True)
@@ -45,6 +50,27 @@ def generate_title(messages):
     return "New Chat"
 
 
+@st.cache_data
+def get_chat_summaries(chat_dir):
+    summaries = []
+    for file in os.listdir(chat_dir):
+        if not file.endswith(".json"):
+            continue
+
+        cid = file.replace(".json", "")
+        title = "Chat"
+        try:
+            with open(f"{chat_dir}/{file}", "r", encoding="utf-8") as f:
+                data = json.load(f)
+                title = data.get("title", "Chat")
+        except Exception:
+            pass
+
+        summaries.append((cid, title))
+
+    return summaries
+
+
 # SESSION INIT
 
 if "chat_id" not in st.session_state:
@@ -68,21 +94,19 @@ if st.sidebar.button("➕ New Chat"):
 
 st.sidebar.divider()
 
-
-for file in os.listdir(CHAT_DIR):
-    cid = file.replace(".json", "")
-    data = load_chat(cid)
-    title = data.get("title", "Chat")
+for cid, title in get_chat_summaries(CHAT_DIR):
 
     col1, col2 = st.sidebar.columns([4, 1])
 
     if col1.button(title, key=f"open_{cid}"):
+        data = load_chat(cid)
         st.session_state.chat_id = cid
         st.session_state.messages = data["messages"]
         st.session_state.title = title
 
     if col2.button("🗑", key=f"del_{cid}"):
         delete_chat(cid)
+        get_chat_summaries.clear()
         st.rerun()
 
 
@@ -151,3 +175,4 @@ if question := st.chat_input("Ask something..."):
         st.session_state.messages,
         st.session_state.title
     )
+    get_chat_summaries.clear()
