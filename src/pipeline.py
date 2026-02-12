@@ -70,13 +70,14 @@ class RAGPipeline:
         )
 
         self.reranker = CrossEncoder(
-            "Qwen/Qwen3-Reranker-0.6B",
+            "BAAI/bge-reranker-v2-m3",
             device="cuda",
             trust_remote_code=True
         )
 
         if self.reranker.tokenizer.pad_token is None:
             self.reranker.tokenizer.pad_token = self.reranker.tokenizer.eos_token
+        self.reranker.model.config.pad_token_id = self.reranker.tokenizer.pad_token_id
 
         # llm
         key = os.getenv("GROQ_API_KEY")
