@@ -9,14 +9,15 @@ from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
-from langchain_core.documents import Document
+from sentence_transformers import CrossEncoder
 
 import crawl_config as cfg
 
 class LocalQwenEmbeddings(Embeddings):
     def __init__(self):
         self.model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B",
-                                         device="cuda")
+                                         device="cuda",
+                                         trust_remote_code=True)
 
     def embed_documents(self, texts):
         return self.model.encode(
@@ -46,7 +47,7 @@ class RAGPipeline:
         )
 
         # dense retriever
-        dense_retriever = self.vectorstore.as_retriever(search_kwargs={"k": 6})
+        dense_retriever = self.vectorstore.as_retriever(search_kwargs={"k": 10})
 
         # load all docs once for BM25
         all_data = self.vectorstore.get()
@@ -60,13 +61,22 @@ class RAGPipeline:
         ]
 
         bm25_retriever = BM25Retriever.from_documents(docs_for_bm25)
-        bm25_retriever.k = 6
+        bm25_retriever.k = 10
 
         # hybrid retriever (RRF fusion)
         self.retriever = EnsembleRetriever(
             retrievers=[dense_retriever, bm25_retriever],
             weights=[0.7, 0.3],
         )
+
+        self.reranker = CrossEncoder(
+            "Qwen/Qwen3-Reranker-0.6B",
+            device="cuda",
+            trust_remote_code=True
+        )
+
+        if self.reranker.tokenizer.pad_token is None:
+            self.reranker.tokenizer.pad_token = self.reranker.tokenizer.eos_token
 
         # llm
         key = os.getenv("GROQ_API_KEY")
@@ -100,7 +110,23 @@ Answer:
 
 
     def _retrieve_documents(self, question: str, k: int = 5):
-        return self.retriever.invoke(question)
+        # fetch larger candidate pool
+        docs = self.retriever.invoke(question)
+
+        # prepare pairs for cross encoder
+        pairs = [(question, d.page_content) for d in docs]
+
+        scores = self.reranker.predict(pairs, batch_size=1)
+
+        # sort by score descending
+        ranked = sorted(
+            zip(scores, docs),
+            key=lambda x: x[0],
+            reverse=True
+        )
+
+        # return top-k
+        return [doc for _, doc in ranked[:k]]
 
 
     def ask(self, question: str, chat_history: list):
